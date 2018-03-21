@@ -14,6 +14,7 @@
 #define NETWORK_ERROR -1
 #define NETWORK_OK  0
 #define MSG_SIZE 64
+#define ORIG_SIZE 49
 
 #define MSB1 128
 #define MSB0 127
@@ -38,14 +39,16 @@ SOCKET udp_s;
 struct sockaddr_in my_addr;
 struct sockaddr_in sender_addr;
 int sender_addr_len = sizeof(sender_addr);
-const char recieved_buffer[49];
+unsigned char recieved_buffer[ORIG_SIZE];
 //blk recieved_buffer[MSG_SIZE/8];
+unsigned char ret_data[4] ;	// an array of 4 chars containing the statistics to be sent back to the channel
+										// 0 - num of bytes recieved, 1 - num of bytes written, 2 - num of frames with errors detected, 3 - num of frames corrected
 unsigned long Address;
 int nret;
 blk fixed_blks[8];
-int num_of_bytes_recieved;
-int num_of_errors = 0;
-int num_fixed = 0;
+//int num_of_bytes_recieved;
+//int num_of_errors = 0;
+//int num_fixed = 0;
 
 
 
@@ -72,10 +75,10 @@ int main(int argc, char* argv[])
 	udp_s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (udp_s == INVALID_SOCKET)
 	{
-		nret = WSAGetLastError();		
-		ReportError(nret, "socket()");		
-		WSACleanup();				
-		return NETWORK_ERROR;			
+		nret = WSAGetLastError();
+		ReportError(nret, "socket()");
+		WSACleanup();
+		return NETWORK_ERROR;
 	}
 
 	Address = inet_addr(SERVER_ADDRESS_STR);
@@ -99,7 +102,7 @@ int main(int argc, char* argv[])
 		return NETWORK_ERROR;
 	}
 
-	hThread[0] = CreateThread( 
+	hThread[0] = CreateThread(
 		NULL,
 		0,
 		(LPTHREAD_START_ROUTINE)InputThread, // A thread which recieves data on the socket and proccesses it
@@ -108,7 +111,7 @@ int main(int argc, char* argv[])
 		NULL
 	);
 
-	hThread[1] = CreateThread( 
+	hThread[1] = CreateThread(
 		NULL,
 		0,
 		(LPTHREAD_START_ROUTINE)DataThread, // A thread which listens to the users input and acts accordingly when "End" is given
@@ -145,7 +148,15 @@ static DWORD InputThread(void)
 		gets_s(input_str, sizeof(input_str));
 		if (strcmp(input_str, "End") == 0)
 		{
-			// do all the stuff that sends the info to the channel and to the user
+			printf("\nreceived: %u bytes\nwritten: %u bytes\ndetected: %u errors, corrected: %u errors\n", ret_data[0], ret_data[1], ret_data[2], ret_data[3]);
+			int sent = sendto(udp_s, ret_data, 4, 0, (SOCKADDR*)&sender_addr, sizeof(sender_addr));
+			if (sent == SOCKET_ERROR)
+			{
+				nret = WSAGetLastError();
+				ReportError(nret, "sendto()");
+				WSACleanup();
+			}
+
 			WSACleanup();
 			return 0;
 		}
@@ -160,19 +171,21 @@ static DWORD DataThread(LPVOID lpParam)
 {
 	char *path;
 	path = (char *)lpParam;
+	const char* CurPlacePtr;
+	int BytesJustTransferred;
+	int RemainingBytesToReceive;
 	while (1)	// each iteration of this endless loop recieves 8 blocks 0f 8*8 bits, handles the pairity checks and fixes,
 				// decodes them to 8 blocks of 7*7 bits and saves them back to a file.
 	{
-		printf("Waiting for data...\n");
-		const char* CurPlacePtr = recieved_buffer;
+		printf("Waiting for data...\n\n");
+		CurPlacePtr = recieved_buffer;
 		//blk* CurPlacePtr = recieved_buffer;
-		int BytesJustTransferred;
-		int RemainingBytesToReceive = 49; // the data the socket recieves is 64 bytes long
-	//	int RemainingBytesToReceive = MSG_SIZE; // the data the socket recieves is 64 bytes long
+		RemainingBytesToReceive = ORIG_SIZE; // the data the socket recieves is 64 bytes long
+										  //	int RemainingBytesToReceive = MSG_SIZE; // the data the socket recieves is 64 bytes long
 		while (RemainingBytesToReceive > 0)
 		{
 			// BytesJustTransferred = recvfrom(udp_s, recieved_buffer, MSG_SIZE, 0, (SOCKADDR*)&sender_addr, &sender_addr_len);
-			BytesJustTransferred = recvfrom(udp_s, recieved_buffer, 49, 0, (SOCKADDR*)&sender_addr, &sender_addr_len);
+			BytesJustTransferred = recvfrom(udp_s, recieved_buffer, ORIG_SIZE, 0, (SOCKADDR*)&sender_addr, &sender_addr_len);
 			if (BytesJustTransferred == SOCKET_ERROR)
 			{
 				nret = WSAGetLastError();
@@ -188,8 +201,10 @@ static DWORD DataThread(LPVOID lpParam)
 			RemainingBytesToReceive -= BytesJustTransferred;
 			CurPlacePtr += BytesJustTransferred;
 		}
+
+
 		printf("DATA: \n");               // print the data
-		for (int c = 0; c < 49; c++) {
+		for (int c = 0; c < ORIG_SIZE; c++) {
 			if (c % 7 == 0) {
 				printf("\n");
 			}
@@ -209,8 +224,8 @@ static DWORD DataThread(LPVOID lpParam)
 		//	printf("\n\n");
 		//}
 
-		//count_and_fix(recieved_buffer, &fixed_blks, &num_of_errors, &num_fixed); //
-		
+		//count_and_fix(recieved_buffer, &fixed_blks, &ret_data[2], &ret_data[3]); //
+
 		//printf("\n\nFIXED:\n"); // print the fixed data
 		//for (int m = 0; m < 1; m++) {
 		//	for (int p = 0; p < 8; p++) {
@@ -222,7 +237,7 @@ static DWORD DataThread(LPVOID lpParam)
 		//	printf("\n\n");
 		//}
 
-		//printf("ERRORS: %d\nFIXED: %d\n", num_of_errors, num_fixed);
+		//printf("ERRORS: %u\nFIXED: %u\n", ret_data[2], ret_data[3]);
 
 		/// break down the buffer to 8 blks
 		/// for each blk: calc_pairity_and_fix()
@@ -242,6 +257,10 @@ static DWORD DataThread(LPVOID lpParam)
 		}
 		fclose(f_dst);
 		f_dst = NULL;
+
+		ret_data[0] += MSG_SIZE;
+		ret_data[1] += ORIG_SIZE;
+		
 	}
 
 }
@@ -250,10 +269,10 @@ static DWORD DataThread(LPVOID lpParam)
 function:		count_and_fix
 input parm:		a pointer to an array of blks (size: 8 blks (64B))
 output parms:	a pointer to an integer that counts the errors
-				a pointer to an integer which count the number of fixable bytes
+a pointer to an integer which count the number of fixable bytes
 functionality:	iterate over each blk, count the number of errors in each blk and fix it if it's possible
 ***************************************/
-void count_and_fix(blk in_blks[8], blk *out_blks, int *nerr, int *nfix) {
+void count_and_fix(blk in_blks[8], blk *out_blks, unsigned char *nerr, unsigned char *nfix) {
 	int i, j, k;
 	int sum_lines = 0;
 	int sum_cols = 0;
@@ -261,7 +280,7 @@ void count_and_fix(blk in_blks[8], blk *out_blks, int *nerr, int *nfix) {
 	int fixed = 0;
 	int lines[] = { 0,0,0,0,0,0,0,0 };
 	int columns[] = { 0,0,0,0,0,0,0,0 }; // smallest index represents the LSB of the column parity byte
-	//blk temp_blks[8];
+										 //blk temp_blks[8];
 	unsigned char c_pair_chk;
 	unsigned char fix_byte;
 
@@ -296,7 +315,7 @@ void count_and_fix(blk in_blks[8], blk *out_blks, int *nerr, int *nfix) {
 			{
 				k++;
 			}
-			*(out_blks+i)->wrd ^= fix_byte; // xor the broken bit with 1 in order to invert it, xor the rest of the bits with 0 to keep them the same
+			*(out_blks + i)->wrd ^= fix_byte; // xor the broken bit with 1 in order to invert it, xor the rest of the bits with 0 to keep them the same
 		}
 		else if (sum_cols != 0 && sum_lines != 0) {
 			detected++; // if the number of pairity errors is not (1,1) or (0,0) we consider it to be an unfixable error which we count as detected.
