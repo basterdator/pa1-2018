@@ -16,8 +16,15 @@
 #define MAX_CLIENTS 1
 #define NETWORK_ERROR -1
 #define NETWORK_OK     0
-#define MSG_SIZE 8
+#define MSG_SIZE 64
 typedef enum { TRNS_FAILED, TRNS_DISCONNECTED, TRNS_SUCCEEDED } TransferResult_t;
+typedef struct {  // block of 8X8 bits
+	unsigned char wrd[8];
+}blk;
+
+typedef struct { // data structure of 1 bit, can hold 0 or 1
+	unsigned short value : 1;
+}bit;
 
 void ReportError(int errorCode, const char *whichFunc);
 
@@ -45,7 +52,8 @@ int main(int argc, char* argv[])
 	remote_addr.sin_addr.s_addr = inet_addr(REMOTE_HOST_IP);
 	remote_addr.sin_port = htons(IN_PORT);
 
-	char send_buf[] = "hdg6us4";
+	blk *pta = (blk *)calloc(8 , sizeof(blk));
+	const char send_buf[] = "theseare64bytesyesyesthoseare64bytesforsuretheseare64bytesyesye";
 	int sent = sendto(s, send_buf, MSG_SIZE, 0, (SOCKADDR*)&remote_addr, sizeof(remote_addr) );
 	if (sent == SOCKET_ERROR)
 	{
